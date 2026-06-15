@@ -19,11 +19,14 @@ struct Lexer<'a> {
     // Whether the previous token ends a value, which decides whether a
     // following `-` is binary subtraction (true) or unary negation (false).
     prev_ends_value: bool,
+    // Whether the previous token is a comma that separates assignment targets,
+    // which makes the next variable charged by its name length.
+    after_lhs_comma: bool,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src, bytes: src.as_bytes(), pos: 0, prev_ends_value: false }
+        Self { src, bytes: src.as_bytes(), pos: 0, prev_ends_value: false, after_lhs_comma: false }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -228,16 +231,36 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Token> {
         self.skip_trivia();
         let b = self.peek()?;
-        let token = match b {
-            b'"' | b'\'' => self.read_short_string(b),
-            b'[' if self.peek_long_bracket_open().is_some() => self.read_long_string(),
-            b if b.is_ascii_digit() => self.read_number(),
-            b'.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.read_number(),
-            b'-' if !self.prev_ends_value && self.minus_starts_number() => self.read_number(),
-            b if b.is_ascii_alphabetic() || b == b'_' => self.read_word(),
-            _ => self.read_punct(),
+        let after_lhs_comma = self.after_lhs_comma;
+        // The match arm already determines the token kind, so we record whether it
+        // ends a value directly instead of re-deriving the kind from the token text.
+        // Numbers and strings always end a value (the leading `-`/`.` a number may
+        // carry would otherwise be misread as "not a value").
+        let (ends_value, token) = match b {
+            b'"' | b'\'' => (true, self.read_short_string(b)),
+            b'[' if self.peek_long_bracket_open().is_some() => (true, self.read_long_string()),
+            b if b.is_ascii_digit() => (true, self.read_number()),
+            b'.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => (true, self.read_number()),
+            b'-' if !self.prev_ends_value && self.minus_starts_number() => (true, self.read_number()),
+            b if b.is_ascii_alphabetic() || b == b'_' => {
+                let mut token = self.read_word();
+                // A variable after a comma in an assignment target list is charged by
+                // its name length: 1 char -> 1, 2-3 -> 2, 4-5 -> 4, ... (2^(len/2)).
+                if after_lhs_comma {
+                    token.cost = Some(1usize << (token.text.len() / 2));
+                }
+                (word_ends_value(&token.text), token)
+            }
+            // Only closing brackets end a value; other punctuation does not.
+            _ => {
+                let token = self.read_punct();
+                (matches!(token.text.as_str(), ")" | "]" | "}"), token)
+            }
         };
-        self.prev_ends_value = token_ends_value(&token.text);
+        self.prev_ends_value = ends_value;
+        // A comma separates assignment targets when the rest forms `Name (, Name)*`
+        // ending with a single `=`; the next variable is then charged by length.
+        self.after_lhs_comma = token.text == "," && self.is_lhs_comma(self.pos);
         Some(token)
     }
 }
@@ -251,22 +274,46 @@ impl Lexer<'_> {
             _ => false,
         }
     }
-}
 
-// Whether a token can end a value expression, so a following `-` is subtraction.
-fn token_ends_value(text: &str) -> bool {
-    match text {
-        ")" | "]" | "}" => true,
-        // Keywords that expect an expression after them keep `-` unary.
-        "and" | "or" | "not" | "if" | "elseif" | "else" | "then" | "do" | "while" | "repeat"
-        | "until" | "for" | "in" | "return" | "function" | "local" | "goto" | "break" => false,
-        _ => {
-            let first = text.as_bytes()[0];
-            // Identifiers, value keywords, numbers, and strings end a value;
-            // other punctuation (operators, `(`, `[`, `{`, `,`, `=`, ...) does not.
-            first.is_ascii_alphanumeric() || first == b'_' || first == b'"' || first == b'\'' || first == b'['
+    fn skip_ws_at(&self, mut pos: usize) -> usize {
+        while matches!(self.bytes.get(pos), Some(b) if b.is_ascii_whitespace()) {
+            pos += 1;
+        }
+        pos
+    }
+
+    // Whether the comma just consumed (cursor now at `pos`) separates assignment
+    // targets, i.e. the rest forms `Name (, Name)*` terminated by a single `=`.
+    fn is_lhs_comma(&self, mut pos: usize) -> bool {
+        loop {
+            pos = self.skip_ws_at(pos);
+            let start = pos;
+            while matches!(self.bytes.get(pos), Some(b) if b.is_ascii_alphanumeric() || *b == b'_') {
+                pos += 1;
+            }
+            // Must be a Name: non-empty and not starting with a digit.
+            if pos == start || self.bytes[start].is_ascii_digit() {
+                return false;
+            }
+            pos = self.skip_ws_at(pos);
+            match self.bytes.get(pos) {
+                Some(b'=') if self.bytes.get(pos + 1) != Some(&b'=') => return true,
+                Some(b',') => pos += 1,
+                _ => return false,
+            }
         }
     }
+}
+
+// Whether a word token (identifier or keyword) ends a value, so a following `-` is
+// subtraction. Keywords that expect an expression after them keep `-` unary; all other
+// words (identifiers and value keywords like `true`/`nil`) end a value.
+fn word_ends_value(text: &str) -> bool {
+    !matches!(
+        text,
+        "and" | "or" | "not" | "if" | "elseif" | "else" | "then" | "do" | "while" | "repeat"
+            | "until" | "for" | "in" | "return" | "function" | "local" | "goto" | "break"
+    )
 }
 
 // Cost of one part of a decimal `a.b`; an empty part contributes nothing.

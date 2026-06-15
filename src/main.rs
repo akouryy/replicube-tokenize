@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 #[command(about = "Tokenize Replicube Lua code and report size", version)]
 struct Cli {
     code: String,
-    #[arg(long, value_enum)]
+    #[arg(short, long, value_enum)]
     format: Format,
 }
 
