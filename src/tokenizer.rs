@@ -2,7 +2,7 @@
 pub struct Token {
     pub text: String,
     /// Token cost, or `None` when the cost is not yet determined
-    /// (string literals, table constructors, non-integer numbers).
+    /// (string literals, table constructors).
     pub cost: Option<usize>,
 }
 
@@ -151,29 +151,65 @@ impl<'a> Lexer<'a> {
             self.scan_while(digit_marker);
             frac = Some((frac_start, self.pos));
         }
-        let mut has_exponent = false;
+        // An exponent must begin with a digit; a sign is handled differently per base,
+        // and an unhandled sign splits the literal so the leftover `sign digits` lex as
+        // separate tokens. Hex `p` accepts no sign (but the marker is still consumed);
+        // decimal `e` accepts a leading `-` but not `+`.
+        let mut exponent: Option<(usize, usize)> = None;
         if matches!(self.peek(), Some(b) if b == exponent_marker[0] || b == exponent_marker[1]) {
-            has_exponent = true;
-            self.pos += 1;
-            if matches!(self.peek(), Some(b'+' | b'-')) {
+            if is_hex {
                 self.pos += 1;
+                if self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                    let exp_start = self.pos;
+                    self.scan_while(|b| b.is_ascii_digit());
+                    exponent = Some((exp_start, self.pos));
+                }
+            } else {
+                let signed = self.peek_at(1) == Some(b'-') && self.peek_at(2).is_some_and(|b| b.is_ascii_digit());
+                if signed || self.peek_at(1).is_some_and(|b| b.is_ascii_digit()) {
+                    self.pos += 1;
+                    if self.peek() == Some(b'-') {
+                        self.pos += 1;
+                    }
+                    let exp_start = self.pos;
+                    self.scan_while(|b| b.is_ascii_digit());
+                    exponent = Some((exp_start, self.pos));
+                }
             }
-            self.scan_while(|b| b.is_ascii_digit());
         }
-        let radix = if is_hex { 16 } else { 10 };
-        let cost = if has_exponent {
-            // Scientific notation cost is undetermined.
-            None
-        } else if let Some((frac_start, frac_end)) = frac {
-            // Decimal `a.b` costs cost(a) + cost(b); a missing `a` or `b` contributes nothing.
-            let int_cost = part_cost(&self.src[int_start..int_end], radix);
-            let frac_cost = part_cost(&self.src[frac_start..frac_end], radix);
-            match (int_cost, frac_cost) {
-                (Some(a), Some(b)) => Some(a + b),
-                _ => None,
+        let cost = if is_hex {
+            // Hex exponents scale the value by `2^E` instead of adding a digit cost.
+            // A bare integer costs `dc(I * 2^E)`; a literal with a fractional part freezes
+            // the integer part and applies the exponent to the fraction: `dc(I) + dc(F * 2^E)`.
+            let exp = match exponent {
+                Some((exp_start, exp_end)) => parse_value(&self.src[exp_start..exp_end], 10).unwrap_or(u64::MAX),
+                None => 0,
+            };
+            match frac {
+                Some((frac_start, frac_end)) => {
+                    let int_val = parse_value(&self.src[int_start..int_end], 16);
+                    let frac_val = parse_value(&self.src[frac_start..frac_end], 16);
+                    match (int_val, frac_val) {
+                        (Some(i), Some(f)) => Some(shifted_cost(i, 0) + shifted_cost(f, exp)),
+                        _ => None,
+                    }
+                }
+                None => parse_value(&self.src[int_start..int_end], 16).map(|i| shifted_cost(i, exp)),
             }
         } else {
-            digits_cost(&self.src[int_start..int_end], radix)
+            // A decimal number costs the sum of its parts: integer + fractional + exponent.
+            // An empty integer/exponent part contributes 0; an empty fractional part
+            // still costs 1 when a decimal point is present.
+            let int_cost = digits_cost(&self.src[int_start..int_end], 10).unwrap_or(0);
+            let frac_cost = match frac {
+                Some((frac_start, frac_end)) => digits_cost(&self.src[frac_start..frac_end], 10).unwrap_or(1),
+                None => 0,
+            };
+            let exp_cost = match exponent {
+                Some((exp_start, exp_end)) => digits_cost(&self.src[exp_start..exp_end], 10).unwrap_or(0),
+                None => 0,
+            };
+            Some(int_cost + frac_cost + exp_cost)
         };
         Token { text: self.src[start..self.pos].to_string(), cost }
     }
@@ -316,11 +352,6 @@ fn word_ends_value(text: &str) -> bool {
     )
 }
 
-// Cost of one part of a decimal `a.b`; an empty part contributes nothing.
-fn part_cost(digits: &str, radix: u32) -> Option<usize> {
-    if digits.is_empty() { Some(0) } else { digits_cost(digits, radix) }
-}
-
 fn digits_cost(digits: &str, radix: u32) -> Option<usize> {
     match u64::from_str_radix(digits, radix).ok() {
         // Cost doubles past each power of 16: 1..=16 -> 1, 17..=256 -> 2, 257..=4096 -> 4, ...
@@ -328,4 +359,21 @@ fn digits_cost(digits: &str, radix: u32) -> Option<usize> {
         Some(v) => Some(1usize << ((v - 1).ilog2() / 4)),
         None => None,
     }
+}
+
+// Parse a digit substring to its value; an empty string is 0 and an overflow is None.
+fn parse_value(digits: &str, radix: u32) -> Option<u64> {
+    if digits.is_empty() { Some(0) } else { u64::from_str_radix(digits, radix).ok() }
+}
+
+// Cost of the value `m * 2^e` (m may be 0), saturating at 1 << 15 the way a u64 value would.
+fn shifted_cost(m: u64, e: u64) -> usize {
+    // 0 and 1 cost 1; `0 * 2^e` is 0, which also costs 1.
+    if m == 0 || (m == 1 && e == 0) {
+        return 1;
+    }
+    // v = m << e >= 2; (v - 1).ilog2() is ilog2(m) + e, less 1 when m is a power of two.
+    let log2 = (m.ilog2() as u64).saturating_add(e);
+    let top_bit = log2 - u64::from(m.is_power_of_two());
+    1usize << (top_bit / 4).min(15)
 }
