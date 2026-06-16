@@ -1,6 +1,6 @@
 #[derive(Debug, Clone)]
-pub struct Token {
-    pub text: String,
+pub struct Token<'a> {
+    pub text: &'a str,
     /// Token cost, or `None` when the cost is not yet determined
     /// (string literals, table constructors).
     pub cost: Option<usize>,
@@ -8,7 +8,7 @@ pub struct Token {
 
 const MULTI_CHAR_PUNCT_2: &[&[u8]] = &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//"];
 
-pub fn tokenize(src: &str) -> Vec<Token> {
+pub fn tokenize(src: &str) -> Vec<Token<'_>> {
     Lexer::new(src).collect()
 }
 
@@ -47,57 +47,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    // Long brackets (`--[[ ]]`) are unsupported, so a comment always runs to end of line.
     fn skip_comment(&mut self) {
         self.pos += 2;
-        if let Some(level) = self.consume_long_bracket_open() {
-            self.skip_to_long_bracket_close(level);
-        } else {
-            while let Some(b) = self.peek() {
-                self.pos += 1;
-                if b == b'\n' {
-                    return;
-                }
-            }
-        }
-    }
-
-    // If the cursor is at a long-bracket opener `[={level}[`, advance past it and return the level.
-    fn consume_long_bracket_open(&mut self) -> Option<usize> {
-        let level = self.peek_long_bracket_open()?;
-        self.pos += level + 2;
-        Some(level)
-    }
-
-    fn peek_long_bracket_open(&self) -> Option<usize> {
-        if self.peek() != Some(b'[') {
-            return None;
-        }
-        let mut j = self.pos + 1;
-        while self.bytes.get(j) == Some(&b'=') {
-            j += 1;
-        }
-        if self.bytes.get(j) == Some(&b'[') { Some(j - self.pos - 1) } else { None }
-    }
-
-    fn skip_to_long_bracket_close(&mut self, level: usize) {
-        while self.pos < self.bytes.len() {
-            if self.bytes[self.pos] == b']' {
-                let mut j = self.pos + 1;
-                let mut count = 0;
-                while self.bytes.get(j) == Some(&b'=') {
-                    j += 1;
-                    count += 1;
-                }
-                if count == level && self.bytes.get(j) == Some(&b']') {
-                    self.pos = j + 1;
-                    return;
-                }
-            }
+        while let Some(b) = self.peek() {
             self.pos += 1;
+            if b == b'\n' {
+                return;
+            }
         }
     }
 
-    fn read_short_string(&mut self, quote: u8) -> Token {
+    fn read_string(&mut self, quote: u8) -> Token<'a> {
         let start = self.pos;
         self.pos += 1;
         while let Some(b) = self.peek() {
@@ -111,25 +72,11 @@ impl<'a> Lexer<'a> {
                 self.pos += 1;
             }
         }
-        self.string_token(start)
+        // String literal cost is undetermined.
+        Token { text: &self.src[start..self.pos], cost: None }
     }
 
-    fn read_long_string(&mut self) -> Token {
-        let start = self.pos;
-        let level = self.consume_long_bracket_open().expect("dispatcher already verified a long-bracket opener");
-        self.skip_to_long_bracket_close(level);
-        self.string_token(start)
-    }
-
-    fn string_token(&self, start: usize) -> Token {
-        Token {
-            text: self.src[start..self.pos].to_string(),
-            // String literal cost is undetermined.
-            cost: None,
-        }
-    }
-
-    fn read_number(&mut self) -> Token {
+    fn read_number(&mut self) -> Token<'a> {
         let start = self.pos;
         // A unary minus is absorbed into the literal; its sign does not affect cost.
         if self.peek() == Some(b'-') {
@@ -156,7 +103,7 @@ impl<'a> Lexer<'a> {
         // separate tokens. Hex `p` accepts no sign (but the marker is still consumed);
         // decimal `e` accepts a leading `-` but not `+`.
         let mut exponent: Option<(usize, usize)> = None;
-        if matches!(self.peek(), Some(b) if b == exponent_marker[0] || b == exponent_marker[1]) {
+        if self.peek().is_some_and(|b| exponent_marker.contains(&b)) {
             if is_hex {
                 self.pos += 1;
                 if self.peek().is_some_and(|b| b.is_ascii_digit()) {
@@ -211,7 +158,7 @@ impl<'a> Lexer<'a> {
             };
             Some(int_cost + frac_cost + exp_cost)
         };
-        Token { text: self.src[start..self.pos].to_string(), cost }
+        Token { text: &self.src[start..self.pos], cost }
     }
 
     fn scan_while<F: Fn(u8) -> bool>(&mut self, pred: F) {
@@ -223,18 +170,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_word(&mut self) -> Token {
+    fn read_word(&mut self, after_lhs_comma: bool) -> Token<'a> {
         let start = self.pos;
         self.scan_while(|b| b.is_ascii_alphanumeric() || b == b'_');
-        Token { text: self.src[start..self.pos].to_string(), cost: Some(1) }
+        let text = &self.src[start..self.pos];
+        let cost = if after_lhs_comma { 1usize << (text.len() / 2) } else { 1 };
+        Token { text, cost: Some(cost) }
     }
 
-    fn read_punct(&mut self) -> Token {
+    fn read_punct(&mut self) -> Token<'a> {
         let start = self.pos;
         let width = self.punct_width();
         self.pos += width;
-        let text = self.src[start..self.pos].to_string();
-        let cost = match text.as_str() {
+        let text = &self.src[start..self.pos];
+        let cost = match text {
             // Closing brackets are free.
             ")" | "]" | "}" => Some(0),
             // Table constructor cost is undetermined.
@@ -259,51 +208,9 @@ impl<'a> Lexer<'a> {
         }
         1
     }
-}
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Token> {
-        self.skip_trivia();
-        let b = self.peek()?;
-        let after_lhs_comma = self.after_lhs_comma;
-        // The match arm already determines the token kind, so we record whether it
-        // ends a value directly instead of re-deriving the kind from the token text.
-        // Numbers and strings always end a value (the leading `-`/`.` a number may
-        // carry would otherwise be misread as "not a value").
-        let (ends_value, token) = match b {
-            b'"' | b'\'' => (true, self.read_short_string(b)),
-            b'[' if self.peek_long_bracket_open().is_some() => (true, self.read_long_string()),
-            b if b.is_ascii_digit() => (true, self.read_number()),
-            b'.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => (true, self.read_number()),
-            b'-' if !self.prev_ends_value && self.minus_starts_number() => (true, self.read_number()),
-            b if b.is_ascii_alphabetic() || b == b'_' => {
-                let mut token = self.read_word();
-                // A variable after a comma in an assignment target list is charged by
-                // its name length: 1 char -> 1, 2-3 -> 2, 4-5 -> 4, ... (2^(len/2)).
-                if after_lhs_comma {
-                    token.cost = Some(1usize << (token.text.len() / 2));
-                }
-                (word_ends_value(&token.text), token)
-            }
-            // Only closing brackets end a value; other punctuation does not.
-            _ => {
-                let token = self.read_punct();
-                (matches!(token.text.as_str(), ")" | "]" | "}"), token)
-            }
-        };
-        self.prev_ends_value = ends_value;
-        // A comma separates assignment targets when the rest forms `Name (, Name)*`
-        // ending with a single `=`; the next variable is then charged by length.
-        self.after_lhs_comma = token.text == "," && self.is_lhs_comma(self.pos);
-        Some(token)
-    }
-}
-
-// Whether a `-` directly following the cursor begins a number literal (`-2`, `-.5`).
-impl Lexer<'_> {
-    fn minus_starts_number(&self) -> bool {
+    // Whether a `-` directly following the cursor begins a number literal (`-2`, `-.5`).
+    fn does_minus_start_number(&self) -> bool {
         match self.peek_at(1) {
             Some(c) if c.is_ascii_digit() => true,
             Some(b'.') => self.peek_at(2).is_some_and(|c| c.is_ascii_digit()),
@@ -341,10 +248,44 @@ impl Lexer<'_> {
     }
 }
 
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        self.skip_trivia();
+        let b = self.peek()?;
+        let after_lhs_comma = self.after_lhs_comma;
+        // The match arm already determines the token kind, so we record whether it
+        // ends a value directly instead of re-deriving the kind from the token text.
+        // Numbers and strings always end a value (the leading `-`/`.` a number may
+        // carry would otherwise be misread as "not a value").
+        let (ends_value, token) = match b {
+            b'"' | b'\'' => (true, self.read_string(b)),
+            b if b.is_ascii_digit() => (true, self.read_number()),
+            b'.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => (true, self.read_number()),
+            b'-' if !self.prev_ends_value && self.does_minus_start_number() => (true, self.read_number()),
+            b if b.is_ascii_alphabetic() || b == b'_' => {
+                let token = self.read_word(after_lhs_comma);
+                (does_word_end_value(token.text), token)
+            }
+            // Only closing brackets end a value; other punctuation does not.
+            _ => {
+                let token = self.read_punct();
+                (matches!(token.text, ")" | "]" | "}"), token)
+            }
+        };
+        self.prev_ends_value = ends_value;
+        // A comma separates assignment targets when the rest forms `Name (, Name)*`
+        // ending with a single `=`; the next variable is then charged by length.
+        self.after_lhs_comma = token.text == "," && self.is_lhs_comma(self.pos);
+        Some(token)
+    }
+}
+
 // Whether a word token (identifier or keyword) ends a value, so a following `-` is
 // subtraction. Keywords that expect an expression after them keep `-` unary; all other
 // words (identifiers and value keywords like `true`/`nil`) end a value.
-fn word_ends_value(text: &str) -> bool {
+fn does_word_end_value(text: &str) -> bool {
     !matches!(
         text,
         "and" | "or" | "not" | "if" | "elseif" | "else" | "then" | "do" | "while" | "repeat"
@@ -353,12 +294,7 @@ fn word_ends_value(text: &str) -> bool {
 }
 
 fn digits_cost(digits: &str, radix: u32) -> Option<usize> {
-    match u64::from_str_radix(digits, radix).ok() {
-        // Cost doubles past each power of 16: 1..=16 -> 1, 17..=256 -> 2, 257..=4096 -> 4, ...
-        Some(0 | 1) => Some(1),
-        Some(v) => Some(1usize << ((v - 1).ilog2() / 4)),
-        None => None,
-    }
+    Some(shifted_cost(u64::from_str_radix(digits, radix).ok()?, 0))
 }
 
 // Parse a digit substring to its value; an empty string is 0 and an overflow is None.
@@ -367,6 +303,7 @@ fn parse_value(digits: &str, radix: u32) -> Option<u64> {
 }
 
 // Cost of the value `m * 2^e` (m may be 0), saturating at 1 << 15 the way a u64 value would.
+// Cost doubles past each power of 16: 0..=16 -> 1, 17..=256 -> 2, 257..=4096 -> 4, ...
 fn shifted_cost(m: u64, e: u64) -> usize {
     // 0 and 1 cost 1; `0 * 2^e` is 0, which also costs 1.
     if m == 0 || (m == 1 && e == 0) {
