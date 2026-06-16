@@ -19,13 +19,13 @@ fn main() {
     let tokens = replicube_tokenize::tokenize(&cli.code);
     if matches!(cli.format, Format::Long) {
         for tok in &tokens {
-            match tok.cost {
+            match tok.cost() {
                 Some(cost) => println!("{cost}\t{}", tok.text),
                 None => println!("?\t{}", tok.text),
             }
         }
     }
-    let total: Option<usize> = tokens.iter().map(|tok| tok.cost).sum();
+    let total: Option<usize> = tokens.iter().map(|tok| tok.cost()).sum();
     match total {
         Some(total) => println!("{total}"),
         None => println!("unknown"),

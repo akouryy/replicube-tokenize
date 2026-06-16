@@ -1,3 +1,5 @@
+mod token;
 mod tokenizer;
 
-pub use tokenizer::{Token, tokenize};
+pub use token::{Token, TokenKind};
+pub use tokenizer::tokenize;
