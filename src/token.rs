@@ -32,11 +32,15 @@ pub enum TokenKind<'a> {
 }
 
 impl Token<'_> {
-    /// Token cost, or `None` when the cost is undetermined (string literals,
-    /// table constructors, unrecognized input).
+    /// Token cost, or `None` when the cost is undetermined (table constructors,
+    /// unrecognized input).
     pub fn cost(&self) -> Option<usize> {
         match &self.kind {
-            TokenKind::Str(_) | TokenKind::OpenBrace | TokenKind::Unknown => None,
+            TokenKind::OpenBrace | TokenKind::Unknown => None,
+            // A string costs `1 << (b/2)` where `b` is the raw byte count between the quotes
+            // (escapes counted as source bytes, not decoded), saturating at 1 << 15 like a
+            // numeric value. This mirrors the assignment-target name cost `1 << (len/2)`.
+            TokenKind::Str(content) => Some(1usize << (content.len() / 2).min(15)),
             TokenKind::Number { is_hex: true, int, frac, exp } => {
                 // Hex exponents scale the value by `2^E` instead of adding a digit cost. A bare
                 // integer costs `dc(I * 2^E)`; with a fractional part the integer part is frozen

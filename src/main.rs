@@ -24,6 +24,7 @@ fn main() {
                 None => println!("?\t{}", tok.text),
             }
         }
+        println!("---");
     }
     let total: Option<usize> = tokens.iter().map(|tok| tok.cost()).sum();
     match total {
