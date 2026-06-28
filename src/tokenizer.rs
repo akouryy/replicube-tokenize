@@ -4,12 +4,13 @@ use crate::warning::Warning;
 const MULTI_CHAR_PUNCT_2: &[&[u8]] =
     &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//", b",["];
 
-pub fn tokenize(src: &str) -> Vec<Token<'_>> {
-    Lexer::new(src).collect()
+pub fn tokenize(src: &str) -> (Vec<Token<'_>>, Vec<Warning>) {
+    let tokens: Vec<_> = Lexer::new(src).collect();
+    let warnings = collect_warnings(src, &tokens);
+    (tokens, warnings)
 }
 
-pub fn warnings(src: &str) -> Vec<Warning> {
-    let tokens = tokenize(src);
+fn collect_warnings(src: &str, tokens: &[Token<'_>]) -> Vec<Warning> {
     let mut warnings = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         if matches!(token.kind, TokenKind::Semicolon) {

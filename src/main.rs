@@ -16,7 +16,7 @@ enum Format {
 
 fn main() {
     let cli = Cli::parse();
-    let tokens = replicube_tokenize::tokenize(&cli.code);
+    let (tokens, warnings) = replicube_tokenize::tokenize(&cli.code);
     if matches!(cli.format, Format::Long) {
         for tok in &tokens {
             match tok.cost() {
@@ -31,7 +31,7 @@ fn main() {
         Some(total) => println!("{total}"),
         None => println!("unknown"),
     }
-    for warning in replicube_tokenize::warnings(&cli.code) {
+    for warning in warnings {
         eprintln!("warning: {warning}");
     }
 }
