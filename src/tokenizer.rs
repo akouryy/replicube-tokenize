@@ -10,17 +10,14 @@ struct Lexer<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
-    // Whether the previous token ends a value, which decides whether a
-    // following `-` is binary subtraction (true) or unary negation (false).
-    does_prev_end_value: bool,
-    // Whether the previous token is a comma that separates assignment targets,
-    // which makes the next variable charged by its name length.
-    is_after_lhs_comma: bool,
+    // When set, a following `-` is subtraction, not negation.
+    is_after_expr_node: bool,
+    is_after_assignment_lhs_comma: bool,
 }
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src, bytes: src.as_bytes(), pos: 0, does_prev_end_value: false, is_after_lhs_comma: false }
+        Self { src, bytes: src.as_bytes(), pos: 0, is_after_expr_node: false, is_after_assignment_lhs_comma: false }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -41,7 +38,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // Long brackets (`--[[ ]]`) are unsupported, so a comment always runs to end of line.
+    // Long brackets (`--[[ ]]`) are unsupported, so a comment runs to end of line.
     fn skip_comment(&mut self) {
         self.pos += 2;
         while let Some(b) = self.peek() {
@@ -67,12 +64,11 @@ impl<'a> Lexer<'a> {
                 self.pos += 1;
             }
         }
-        // Unterminated: the content runs to end of input.
         TokenKind::Str(&self.src[content_start..self.pos])
     }
 
     fn read_number(&mut self) -> TokenKind<'a> {
-        // A unary minus is absorbed into the literal; its sign does not affect cost.
+        // A unary minus (but not plus) is absorbed into the literal.
         if self.peek() == Some(b'-') {
             self.pos += 1;
         }
@@ -91,10 +87,9 @@ impl<'a> Lexer<'a> {
         TokenKind::Number { is_hex, int, frac, exp }
     }
 
-    // Read an exponent suffix, returning its digit run. An exponent must begin with a digit; a
-    // sign is handled differently per base, and an unhandled sign splits the literal so the
-    // leftover `sign digits` lex as separate tokens. Hex `p` accepts no sign (but the marker is
-    // still consumed); decimal `e` accepts a leading `-` but not `+`.
+    // Read an exponent suffix, returning its digit run. It must begin with a digit; an unhandled
+    // sign splits the literal so the leftover `sign digits` lex separately. Hex `p` accepts no
+    // sign (the marker is still consumed); decimal `e` accepts a leading `-` but not `+`.
     fn read_exponent(&mut self, is_hex: bool, marker: [u8; 2]) -> Option<&'a str> {
         if !self.peek().is_some_and(|b| marker.contains(&b)) {
             return None;
@@ -123,7 +118,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // Advance over bytes matching `pred` and return the slice consumed.
     fn scan_slice<F: Fn(u8) -> bool>(&mut self, pred: F) -> &'a str {
         let start = self.pos;
         self.scan_while(pred);
@@ -160,7 +154,6 @@ impl<'a> Lexer<'a> {
         1
     }
 
-    // Whether a `-` directly following the cursor begins a number literal (`-2`, `-.5`).
     fn does_minus_start_number(&self) -> bool {
         match self.peek_at(1) {
             Some(c) if c.is_ascii_digit() => true,
@@ -176,16 +169,13 @@ impl<'a> Lexer<'a> {
         pos
     }
 
-    // Whether the comma just consumed (cursor now at `pos`) separates assignment
-    // targets, i.e. the rest forms `Name (, Name)*` terminated by a single `=`.
-    fn is_lhs_comma(&self, mut pos: usize) -> bool {
+    fn is_assignment_lhs_comma(&self, mut pos: usize) -> bool {
         loop {
             pos = self.skip_ws_at(pos);
             let start = pos;
             while matches!(self.bytes.get(pos), Some(b) if b.is_ascii_alphanumeric() || *b == b'_') {
                 pos += 1;
             }
-            // Must be a Name: non-empty and not starting with a digit.
             if pos == start || self.bytes[start].is_ascii_digit() {
                 return false;
             }
@@ -205,26 +195,23 @@ impl<'a> Iterator for Lexer<'a> {
     fn next(&mut self) -> Option<Token<'a>> {
         self.skip_trivia();
         let b = self.peek()?;
-        let is_after_lhs_comma = self.is_after_lhs_comma;
+        let is_after_assignment_lhs_comma = self.is_after_assignment_lhs_comma;
         let start = self.pos;
         let kind = match b {
             b'"' | b'\'' => self.read_string(b),
             b if b.is_ascii_digit() => self.read_number(),
             b'.' if self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) => self.read_number(),
-            b'-' if !self.does_prev_end_value && self.does_minus_start_number() => self.read_number(),
+            b'-' if !self.is_after_expr_node && self.does_minus_start_number() => self.read_number(),
             b if b.is_ascii_alphabetic() || b == b'_' => self.read_word(),
             _ => self.read_punct(),
         };
-        let token = Token { text: &self.src[start..self.pos], is_after_lhs_comma, kind };
-        self.does_prev_end_value = does_token_end_value(&token);
-        // A comma separates assignment targets when the rest forms `Name (, Name)*`
-        // ending with a single `=`; the next variable is then charged by length.
-        self.is_after_lhs_comma = token.text == "," && self.is_lhs_comma(self.pos);
+        let token = Token { text: &self.src[start..self.pos], is_after_assignment_lhs_comma, kind };
+        self.is_after_expr_node = does_token_end_value(&token);
+        self.is_after_assignment_lhs_comma = token.text == "," && self.is_assignment_lhs_comma(self.pos);
         Some(token)
     }
 }
 
-// Whether a token ends a value, so a following `-` is subtraction rather than a unary sign.
 fn does_token_end_value(token: &Token) -> bool {
     match token.kind {
         TokenKind::Str(_) | TokenKind::Number { .. } | TokenKind::ClosingBracket => true,
@@ -233,9 +220,6 @@ fn does_token_end_value(token: &Token) -> bool {
     }
 }
 
-// Whether a word token (identifier or keyword) ends a value. Keywords that expect an expression
-// after them keep `-` unary; all other words (identifiers and value keywords like `true`/`nil`)
-// end a value.
 fn does_word_end_value(text: &str) -> bool {
     !matches!(
         text,
