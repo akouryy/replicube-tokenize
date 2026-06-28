@@ -1,9 +1,32 @@
 use crate::token::{Token, TokenKind};
+use crate::warning::Warning;
 
-const MULTI_CHAR_PUNCT_2: &[&[u8]] = &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//"];
+const MULTI_CHAR_PUNCT_2: &[&[u8]] =
+    &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//", b",["];
 
 pub fn tokenize(src: &str) -> Vec<Token<'_>> {
     Lexer::new(src).collect()
+}
+
+pub fn warnings(src: &str) -> Vec<Warning> {
+    let tokens = tokenize(src);
+    let mut warnings = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        if matches!(token.kind, TokenKind::Unknown) && token.text == ";" {
+            warnings.push(Warning::Semicolon { pos: byte_offset(src, token) });
+        }
+        if matches!(token.kind, TokenKind::Punct)
+            && token.text == ","
+            && tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::Punct) && t.text == "[")
+        {
+            warnings.push(Warning::WhitespaceBetweenCommaAndBracket { pos: byte_offset(src, token) });
+        }
+    }
+    warnings
+}
+
+fn byte_offset(src: &str, token: &Token) -> usize {
+    token.text.as_ptr() as usize - src.as_ptr() as usize
 }
 
 struct Lexer<'a> {
@@ -136,8 +159,8 @@ impl<'a> Lexer<'a> {
             ")" | "]" | "}" => TokenKind::ClosingBracket,
             "{" => TokenKind::OpenBrace,
             "(" | "[" | "+" | "-" | "*" | "/" | "%" | "^" | "#" | "&" | "~" | "|" | "<" | ">"
-            | "=" | ";" | ":" | "," | "." | "==" | "~=" | "<=" | ">=" | ".." | "::" | "<<"
-            | ">>" | "//" | "..." => TokenKind::Punct,
+            | "=" | ":" | "," | "." | "==" | "~=" | "<=" | ">=" | ".." | "::" | "<<"
+            | ">>" | "//" | "..." | ",[" => TokenKind::Punct,
             _ => TokenKind::Unknown,
         }
     }
@@ -216,7 +239,9 @@ fn does_token_end_value(token: &Token) -> bool {
     match token.kind {
         TokenKind::Str(_) | TokenKind::Number { .. } | TokenKind::ClosingBracket => true,
         TokenKind::Ident => does_word_end_value(token.text),
-        TokenKind::Punct | TokenKind::OpenBrace | TokenKind::Unknown => false,
+        // Replicube quirk: `[` and `,[` are (buggily) treated as ending a value, so a following `-` lexes as subtraction rather than a sign; e.g. `[-5]` costs `[`, `-`, `5` separately.
+        TokenKind::Punct => matches!(token.text, "[" | ",["),
+        TokenKind::OpenBrace | TokenKind::Unknown => false,
     }
 }
 

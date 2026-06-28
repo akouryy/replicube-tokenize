@@ -31,4 +31,7 @@ fn main() {
         Some(total) => println!("{total}"),
         None => println!("unknown"),
     }
+    for warning in replicube_tokenize::warnings(&cli.code) {
+        eprintln!("warning: {warning}");
+    }
 }

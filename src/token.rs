@@ -22,11 +22,10 @@ pub enum TokenKind<'a> {
 }
 
 impl Token<'_> {
-    /// Token cost, or `None` when the cost is undetermined (table constructors,
-    /// unrecognized input).
+    /// Token cost, or `None` when the cost is undetermined (unrecognized input).
     pub fn cost(&self) -> Option<usize> {
         match &self.kind {
-            TokenKind::OpenBrace | TokenKind::Unknown => None,
+            TokenKind::Unknown => None,
             // Escapes are counted as raw source bytes, not decoded.
             TokenKind::Str(content) => Some(1usize << (content.len() / 2).min(15)),
             TokenKind::Number { is_hex: true, int, frac, exp } => {
@@ -58,7 +57,8 @@ impl Token<'_> {
                 Some(if self.is_after_assignment_lhs_comma { 1usize << (self.text.len() / 2) } else { 1 })
             }
             TokenKind::ClosingBracket => Some(0),
-            TokenKind::Punct => Some(1),
+            // An open brace (table constructor) costs the same as other opening punctuation.
+            TokenKind::OpenBrace | TokenKind::Punct => Some(1),
         }
     }
 }
