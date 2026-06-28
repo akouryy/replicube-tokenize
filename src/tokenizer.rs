@@ -12,12 +12,11 @@ pub fn warnings(src: &str) -> Vec<Warning> {
     let tokens = tokenize(src);
     let mut warnings = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
-        if matches!(token.kind, TokenKind::Unknown) && token.text == ";" {
+        if matches!(token.kind, TokenKind::Semicolon) {
             warnings.push(Warning::Semicolon { pos: byte_offset(src, token) });
         }
-        if matches!(token.kind, TokenKind::Punct)
-            && token.text == ","
-            && tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::Punct) && t.text == "[")
+        if matches!(token.kind, TokenKind::Comma)
+            && tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::OpenBracket))
         {
             warnings.push(Warning::WhitespaceBetweenCommaAndBracket { pos: byte_offset(src, token) });
         }
@@ -158,9 +157,13 @@ impl<'a> Lexer<'a> {
         match &self.src[start..self.pos] {
             ")" | "]" | "}" => TokenKind::ClosingBracket,
             "{" => TokenKind::OpenBrace,
-            "(" | "[" | "+" | "-" | "*" | "/" | "%" | "^" | "#" | "&" | "~" | "|" | "<" | ">"
-            | "=" | ":" | "," | "." | "==" | "~=" | "<=" | ">=" | ".." | "::" | "<<"
-            | ">>" | "//" | "..." | ",[" => TokenKind::Punct,
+            "[" => TokenKind::OpenBracket,
+            ",[" => TokenKind::CommaOpenBracket,
+            "," => TokenKind::Comma,
+            ";" => TokenKind::Semicolon,
+            "(" | "+" | "-" | "*" | "/" | "%" | "^" | "#" | "&" | "~" | "|" | "<" | ">"
+            | "=" | ":" | "." | "==" | "~=" | "<=" | ">=" | ".." | "::" | "<<"
+            | ">>" | "//" | "..." => TokenKind::Punct,
             _ => TokenKind::Unknown,
         }
     }
@@ -230,7 +233,8 @@ impl<'a> Iterator for Lexer<'a> {
         };
         let token = Token { text: &self.src[start..self.pos], is_after_assignment_lhs_comma, kind };
         self.is_after_expr_node = does_token_end_value(&token);
-        self.is_after_assignment_lhs_comma = token.text == "," && self.is_assignment_lhs_comma(self.pos);
+        self.is_after_assignment_lhs_comma =
+            matches!(token.kind, TokenKind::Comma) && self.is_assignment_lhs_comma(self.pos);
         Some(token)
     }
 }
@@ -240,8 +244,12 @@ fn does_token_end_value(token: &Token) -> bool {
         TokenKind::Str(_) | TokenKind::Number { .. } | TokenKind::ClosingBracket => true,
         TokenKind::Ident => does_word_end_value(token.text),
         // Replicube quirk: `[` and `,[` are (buggily) treated as ending a value, so a following `-` lexes as subtraction rather than a sign; e.g. `[-5]` costs `[`, `-`, `5` separately.
-        TokenKind::Punct => matches!(token.text, "[" | ",["),
-        TokenKind::OpenBrace | TokenKind::Unknown => false,
+        TokenKind::OpenBracket | TokenKind::CommaOpenBracket => true,
+        TokenKind::Punct
+        | TokenKind::OpenBrace
+        | TokenKind::Comma
+        | TokenKind::Semicolon
+        | TokenKind::Unknown => false,
     }
 }
 
