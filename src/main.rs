@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 
 #[derive(Parser)]
-#[command(about = "Tokenize Replicube Lua code and report size", version)]
+#[command(about = "Tokenize Replicube Lua code and report cost", version)]
 struct Cli {
     code: String,
     #[arg(short, long, value_enum)]

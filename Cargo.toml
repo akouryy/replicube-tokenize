@@ -3,8 +3,13 @@ name = "replicube-tokenize"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "A CLI and Rust crate for tokenizing Replicube Lua code, with size reporting"
+description = "A CLI and Rust crate for tokenizing the game Replicube's Lua code, with cost reporting"
 license = "MIT"
+repository = "https://github.com/akouryy/replicube-tokenize"
+readme = "README.md"
+keywords = ["replicube", "lua", "tokenizer", "code-golf"]
+categories = ["command-line-utilities", "parser-implementations"]
+exclude = ["CLAUDE.md"]
 
 [lib]
 name = "replicube_tokenize"
