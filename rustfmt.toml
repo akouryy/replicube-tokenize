@@ -1,0 +1,13 @@
+condense_wildcard_suffixes=true
+edition="2024"
+fn_single_line=true
+group_imports="One"
+imports_granularity="Module"
+match_block_trailing_comma=true
+max_width=128
+overflow_delimited_expr=true
+reorder_impl_items=true
+style_edition="2024"
+use_field_init_shorthand=true
+use_small_heuristics="Max"
+use_try_shorthand=true

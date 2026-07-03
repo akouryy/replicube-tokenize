@@ -1,8 +1,7 @@
 use crate::token::{Token, TokenKind};
 use crate::warning::Warning;
 
-const MULTI_CHAR_PUNCT_2: &[&[u8]] =
-    &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//", b",["];
+const MULTI_CHAR_PUNCT_2: &[&[u8]] = &[b"==", b"~=", b"<=", b">=", b"..", b"::", b"<<", b">>", b"//", b",["];
 
 pub fn tokenize(src: &str) -> (Vec<Token<'_>>, Vec<Warning>) {
     let tokens: Vec<_> = Lexer::new(src).collect();
@@ -16,8 +15,7 @@ fn collect_warnings(src: &str, tokens: &[Token<'_>]) -> Vec<Warning> {
         if matches!(token.kind, TokenKind::Semicolon) {
             warnings.push(Warning::Semicolon { pos: byte_offset(src, token) });
         }
-        if matches!(token.kind, TokenKind::Comma)
-            && tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::OpenBracket))
+        if matches!(token.kind, TokenKind::Comma) && tokens.get(i + 1).is_some_and(|t| matches!(t.kind, TokenKind::OpenBracket))
         {
             warnings.push(Warning::WhitespaceBetweenCommaAndBracket { pos: byte_offset(src, token) });
         }
@@ -25,9 +23,7 @@ fn collect_warnings(src: &str, tokens: &[Token<'_>]) -> Vec<Warning> {
     warnings
 }
 
-fn byte_offset(src: &str, token: &Token) -> usize {
-    token.text.as_ptr() as usize - src.as_ptr() as usize
-}
+fn byte_offset(src: &str, token: &Token) -> usize { token.text.as_ptr() as usize - src.as_ptr() as usize }
 
 struct Lexer<'a> {
     src: &'a str,
@@ -43,13 +39,9 @@ impl<'a> Lexer<'a> {
         Self { src, bytes: src.as_bytes(), pos: 0, is_after_expr_node: false, is_after_assignment_lhs_comma: false }
     }
 
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.pos).copied()
-    }
+    fn peek(&self) -> Option<u8> { self.bytes.get(self.pos).copied() }
 
-    fn peek_at(&self, offset: usize) -> Option<u8> {
-        self.bytes.get(self.pos + offset).copied()
-    }
+    fn peek_at(&self, offset: usize) -> Option<u8> { self.bytes.get(self.pos + offset).copied() }
 
     fn skip_trivia(&mut self) {
         loop {
@@ -162,9 +154,8 @@ impl<'a> Lexer<'a> {
             ",[" => TokenKind::CommaOpenBracket,
             "," => TokenKind::Comma,
             ";" => TokenKind::Semicolon,
-            "(" | "+" | "-" | "*" | "/" | "%" | "^" | "#" | "&" | "~" | "|" | "<" | ">"
-            | "=" | ":" | "." | "==" | "~=" | "<=" | ">=" | ".." | "::" | "<<"
-            | ">>" | "//" | "..." => TokenKind::Punct,
+            "(" | "+" | "-" | "*" | "/" | "%" | "^" | "#" | "&" | "~" | "|" | "<" | ">" | "=" | ":" | "." | "==" | "~="
+            | "<=" | ">=" | ".." | "::" | "<<" | ">>" | "//" | "..." => TokenKind::Punct,
             _ => TokenKind::Unknown,
         }
     }
@@ -234,8 +225,7 @@ impl<'a> Iterator for Lexer<'a> {
         };
         let token = Token { text: &self.src[start..self.pos], is_after_assignment_lhs_comma, kind };
         self.is_after_expr_node = does_token_end_value(&token);
-        self.is_after_assignment_lhs_comma =
-            matches!(token.kind, TokenKind::Comma) && self.is_assignment_lhs_comma(self.pos);
+        self.is_after_assignment_lhs_comma = matches!(token.kind, TokenKind::Comma) && self.is_assignment_lhs_comma(self.pos);
         Some(token)
     }
 }
@@ -246,18 +236,30 @@ fn does_token_end_value(token: &Token) -> bool {
         TokenKind::Ident => does_word_end_value(token.text),
         // Replicube quirk: `[` and `,[` are (buggily) treated as ending a value, so a following `-` lexes as subtraction rather than a sign; e.g. `[-5]` costs `[`, `-`, `5` separately.
         TokenKind::OpenBracket | TokenKind::CommaOpenBracket => true,
-        TokenKind::Punct
-        | TokenKind::OpenBrace
-        | TokenKind::Comma
-        | TokenKind::Semicolon
-        | TokenKind::Unknown => false,
+        TokenKind::Punct | TokenKind::OpenBrace | TokenKind::Comma | TokenKind::Semicolon | TokenKind::Unknown => false,
     }
 }
 
 fn does_word_end_value(text: &str) -> bool {
     !matches!(
         text,
-        "and" | "or" | "not" | "if" | "elseif" | "else" | "then" | "do" | "while" | "repeat"
-            | "until" | "for" | "in" | "return" | "function" | "local" | "goto" | "break"
+        "and"
+            | "or"
+            | "not"
+            | "if"
+            | "elseif"
+            | "else"
+            | "then"
+            | "do"
+            | "while"
+            | "repeat"
+            | "until"
+            | "for"
+            | "in"
+            | "return"
+            | "function"
+            | "local"
+            | "goto"
+            | "break"
     )
 }

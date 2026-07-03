@@ -8,14 +8,11 @@ impl std::fmt::Display for Warning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Warning::WhitespaceBetweenCommaAndBracket { pos } => {
-                write!(
-                    f,
-                    "byte {pos}: whitespace between `,` and `[` wastes a token; write `,[` instead"
-                )
-            }
+                write!(f, "byte {pos}: whitespace between `,` and `[` wastes a token; write `,[` instead")
+            },
             Warning::Semicolon { pos } => {
                 write!(f, "byte {pos}: replace `;` with whitespace or a comma")
-            }
+            },
         }
     }
 }

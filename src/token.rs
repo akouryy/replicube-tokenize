@@ -8,12 +8,7 @@ pub struct Token<'a> {
 #[derive(Debug, Clone)]
 pub enum TokenKind<'a> {
     Str(&'a str),
-    Number {
-        is_hex: bool,
-        int: &'a str,
-        frac: Option<&'a str>,
-        exp: Option<&'a str>,
-    },
+    Number { is_hex: bool, int: &'a str, frac: Option<&'a str>, exp: Option<&'a str> },
     Ident,
     ClosingBracket,
     Punct,
@@ -44,7 +39,7 @@ impl Token<'_> {
                     },
                     None => parse_value(int, 16).map(|i| shifted_cost(i, e)),
                 }
-            }
+            },
             TokenKind::Number { is_hex: false, int, frac, exp } => {
                 let int_cost = digits_cost(int, 10).unwrap_or(0);
                 let frac_cost = match frac {
@@ -56,10 +51,8 @@ impl Token<'_> {
                     None => 0,
                 };
                 Some(int_cost + frac_cost + exp_cost)
-            }
-            TokenKind::Ident => {
-                Some(if self.is_after_assignment_lhs_comma { 1usize << (self.text.len() / 2) } else { 1 })
-            }
+            },
+            TokenKind::Ident => Some(if self.is_after_assignment_lhs_comma { 1usize << (self.text.len() / 2) } else { 1 }),
             TokenKind::ClosingBracket => Some(0),
             TokenKind::OpenBrace
             | TokenKind::OpenBracket
@@ -70,9 +63,7 @@ impl Token<'_> {
     }
 }
 
-fn digits_cost(digits: &str, radix: u32) -> Option<usize> {
-    Some(shifted_cost(u64::from_str_radix(digits, radix).ok()?, 0))
-}
+fn digits_cost(digits: &str, radix: u32) -> Option<usize> { Some(shifted_cost(u64::from_str_radix(digits, radix).ok()?, 0)) }
 
 fn parse_value(digits: &str, radix: u32) -> Option<u64> {
     if digits.is_empty() { Some(0) } else { u64::from_str_radix(digits, radix).ok() }
